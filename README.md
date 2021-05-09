@@ -20,3 +20,12 @@ blocking the main (UI) thread.
 
 A deep-down explanation of this concept is available 
 [here](https://developers.google.com/web/updates/2017/12/audio-worklet).
+
+## Show me the code!
+
+* `main.js` :
+get mic access through the getUserMedia API, receive messages
+from the processor and visualize the info available
+
+* `volmeter-processor.js` :
+this is where the background magic happens
