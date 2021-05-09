@@ -29,3 +29,11 @@ from the processor and visualize the info available
 
 * `volmeter-processor.js` :
 this is where the background magic happens
+
+## Show me the demo!
+
+I cheated a bit here, you'll need python 3. Just clone and run
+
+`python3 -m http.server 3001`
+
+then open `localhost:3001` and see the tool at work.
