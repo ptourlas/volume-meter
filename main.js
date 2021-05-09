@@ -1,103 +1,141 @@
-/*
-The MIT License (MIT)
+/** Declare a context for AudioContext object */
+let audioContext
 
-Copyright (c) 2014 Chris Wilson
+let ledColor = Array(26).fill("#00FF00")
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+for (let i = 0; i < 5; i++) {
+    ledColor[i] = '#FF0000'
+}
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+for (let i = 21; i < 26; i++) {
+    ledColor[i] = '#FF0000'
+}
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-var audioContext = null;
-var meter = null;
-var canvasContext = null;
-var WIDTH=500;
-var HEIGHT=50;
-var rafID = null;
 
-window.onload = function() {
+let isFirstClick = true
+let _listening = false
+let _current_message = null
 
-    // grab our canvas
-	canvasContext = document.getElementById( "meter" ).getContext("2d");
-	
-    // monkeypatch Web Audio
-    window.AudioContext = window.AudioContext || window.webkitAudioContext;
-	
-    // grab an audio context
-    audioContext = new AudioContext();
+function onMicrophoneDenied() {
+    console.log('denied')
+}
 
-    // Attempt to get audio input
-    try {
-        // monkeypatch getUserMedia
-        navigator.getUserMedia = 
-        	navigator.getUserMedia ||
-        	navigator.webkitGetUserMedia ||
-        	navigator.mozGetUserMedia;
+/**
+ * Update leds on the screen
+ * 
+ * @param {Float} vol volume returned from AudioWorkletProcessor (in the unit interval)
+ */
+function leds(vol) {
 
-        // ask for an audio input
-        navigator.getUserMedia(
-        {
-            "audio": {
-                "mandatory": {
-                    "googEchoCancellation": "false",
-                    "googAutoGainControl": "false",
-                    "googNoiseSuppression": "false",
-                    "googHighpassFilter": "false"
-                },
-                "optional": []
-            },
-        }, gotStream, didntGetStream);
-    } catch (e) {
-        alert('getUserMedia threw exception :' + e);
+    let leds = [...document.getElementsByClassName('select-led')]
+
+    /*
+        The number of leds in the current implementation is 26.
+        A suitable abstraction would be leds.length while also
+        unifying the array defined on top of the module with the
+        selection returned at the start of the function.
+    */
+    const _map_vol_to_led_range = Math.round(vol*25)
+    
+    /* Reset all leds before updating them. */
+    for (var i = 0; i < leds.length; i++) {
+        leds[i].style.backgroundColor = '#313237'
     }
 
+    for (var i = 0; i < _map_vol_to_led_range; i++) {
+        leds[i].style.backgroundColor = `${ledColor[i]}`
+    }
 }
 
+async function onMicrophoneGranted(stream) {
+   
+    if (isFirstClick) {
 
-function didntGetStream() {
-    alert('Stream generation failed.');
+        audioContext = new AudioContext()
+
+        // Add an AudioWorkletProcessor from another script with addModule method
+        await audioContext.audioWorklet.addModule('volmeter-processor.js')
+
+        // Create a MediaStreamSource object and send a MediaStream object granted by the user
+        let microphone = audioContext.createMediaStreamSource(stream)
+
+        // Create AudioWorkletNode sending context and name of processor registered in vumeter-processor.js
+        const node = new AudioWorkletNode(audioContext, 'volume_meter')
+
+        // Listing any message from AudioWorkletProcessor in its
+        // process method here where you can know
+        // the volume level
+        node.port.onmessage = event => {
+
+            let _volume = 0
+            let _rms = 0
+            let _dB = 0
+            
+            _current_message = event.data
+
+            if (!_listening) console.log('latest readings:', event.data)
+
+            if (event.data.volume) {
+                _volume = event.data.volume
+                _rms = event.data.rms
+                _dB = event.data.dB
+            }
+            
+            leds(_volume)
+
+            document.getElementById('vol-output').innerHTML = _volume.toFixed(5)
+            document.getElementById('rms-output').innerHTML = _rms.toFixed(5)
+            document.getElementById('db-output').innerHTML  = _dB.toFixed(5)
+        }
+
+        /**
+         * Connect the microphone to the AudioWorkletNode 
+         * and output from audioContext. Note that the end
+         * destination is the final node of the audio graph.
+         */
+        microphone.connect(node) 
+        /*
+            .connect(audioContext.destination) could follow
+            the above expression (i.e. connect the speakers),
+            but we only need the readings, not an output device
+        */
+
+        /*
+            This block only has to be run once, initializing the
+            media stream source, the worklet and the callback that
+            handles the messages from the AudioWorkletProcessor.
+            Then it's only a matter of suspending/resuming the
+            audioContext.
+        */
+        isFirstClick = false 
+    }
+
+    if (_listening) {
+        audioContext.suspend()
+    } else {
+        audioContext.resume()
+    }
+
+    _listening = !_listening
 }
 
-var mediaStreamSource = null;
+/**
+ * Ask permission to use the microphone.
+ */
+function activeSound () {
+    try {
+        
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then( 
+            stream => onMicrophoneGranted(stream)
+        )
+        .catch( onMicrophoneDenied )
 
-function gotStream(stream) {
-    // Create an AudioNode from the stream.
-    mediaStreamSource = audioContext.createMediaStreamSource(stream);
-
-    // Create a new volume meter and connect it.
-    meter = createAudioMeter(audioContext);
-    mediaStreamSource.connect(meter);
-
-    // kick off the visual updating
-    drawLoop();
+    } catch(e) {
+        alert(e)
+    }
 }
 
-function drawLoop( time ) {
-    // clear the background
-    canvasContext.clearRect(0,0,WIDTH,HEIGHT);
-
-    // check if we're currently clipping
-    if (meter.checkClipping())
-        canvasContext.fillStyle = "red";
-    else
-        canvasContext.fillStyle = "green";
-
-    // draw a bar based on the current volume
-    canvasContext.fillRect(0, 0, meter.volume*WIDTH*1.4, HEIGHT);
-
-    // set up the next visual callback
-    rafID = window.requestAnimationFrame( drawLoop );
-}
+document.getElementById('audio').addEventListener('click', () => {
+    activeSound()
+})
